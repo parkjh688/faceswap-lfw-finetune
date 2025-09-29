@@ -40,7 +40,7 @@ class fsModel(BaseModel):
 
         # ArcFace (checkpoint may contain a module or a dict)
         arc_ckpt_path = opt.Arc_path
-        arc_obj = torch.load(arc_ckpt_path, map_location="cpu")
+        arc_obj = torch.load(arc_ckpt_path, map_location=self.device, weights_only=False)
         if isinstance(arc_obj, nn.Module):
             self.netArc = arc_obj
         elif isinstance(arc_obj, dict) and "model" in arc_obj:

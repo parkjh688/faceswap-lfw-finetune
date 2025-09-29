@@ -124,7 +124,7 @@ if __name__ == '__main__':
             print("Checkpoint load failed:", e)
 
     if opt.Arc_path and os.path.exists(opt.Arc_path):
-        arc_obj = torch.load(opt.Arc_path, map_location=device)
+        arc_obj = torch.load(opt.Arc_path, map_location=device, weights_only=False)
         if isinstance(arc_obj, dict) and "model" in arc_obj:
             arc_state = arc_obj["model"]
         elif isinstance(arc_obj, dict):
@@ -166,7 +166,7 @@ if __name__ == '__main__':
     # Init WandB
     # -------------------------------
     wandb.init(
-        project="faceswap-lfw",
+        project="faceswap-lfw-gpu",
         name=opt.name,
         config=vars(opt)
     )
