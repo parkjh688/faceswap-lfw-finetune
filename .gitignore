@@ -1,0 +1,21 @@
+# Dataset
+lfw_funneled/
+
+# Model weights / checkpoints
+checkpoints/
+arcface_model/
+people/
+*.pth
+*.pt
+*.ckpt
+
+# Logs
+*.log
+wandb/
+events.out.tfevents*
+
+# Python cache
+__pycache__/
+*.pyc
+.DS_Store
+
