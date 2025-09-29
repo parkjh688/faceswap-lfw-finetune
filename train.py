@@ -159,7 +159,7 @@ if __name__ == '__main__':
     imagenet_std = torch.tensor([0.229, 0.224, 0.225], device=device).view(3, 1, 1)
     imagenet_mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(3, 1, 1)
 
-    train_loader = get_lfw_loader("./lfw_funneled", batch_size=4, self_prob=0.3)
+    train_loader = get_lfw_loader(opt.dataset, batch_size=4, self_prob=0.3)
     data_iter = iter(train_loader)
 
     # -------------------------------
