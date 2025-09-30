@@ -206,7 +206,7 @@ if __name__ == '__main__':
     denorm = lambda x: (x * imagenet_std + imagenet_mean).clamp(0, 1)
 
     train_loader = get_lfw_loader_aligned(
-        root_dir="./lfw_aligned_224",
+        root_dir=opt.dataset,
         batch_size=opt.batchSize,
         num_workers=4,
         seed=1234 + global_step_offset,  # resume 시 다른 시작점
