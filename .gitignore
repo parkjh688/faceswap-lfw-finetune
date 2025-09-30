@@ -1,5 +1,6 @@
 # Dataset
 lfw_funneled/
+lfw_aligned_224/
 
 # Model weights / checkpoints
 checkpoints/
