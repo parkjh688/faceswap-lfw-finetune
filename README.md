@@ -7,24 +7,17 @@ Face swap implementation using SimSwap architecture, fine-tuned on the LFW (Labe
 - **Face alignment** using InsightFace for robust preprocessing
 - **Identity preservation** with ArcFace embeddings
 - **FastAPI server** for image and video face swapping
+- **Video stabilization** with optical flow and FFmpeg post-processing
 - **LFW dataset fine-tuning** with self-swap and cross-swap sampling
 - **WandB integration** for training visualization
 
-## Project Structure
+## Requirements
 
-```
-├── app/
-│   ├── api.py              # FastAPI endpoints
-│   ├── inference.py        # Face swap pipeline
-│   └── video.py            # Video processing
-├── data/
-│   ├── data_loader_lfw.py  # LFW dataset loader
-│   └── face_align_utils.py # Face alignment utilities
-├── models/
-│   └── projected_model.py  # SimSwap model definition
-├── train.py                # Training script
-└── save_aligned.py         # Batch face alignment script
-```
+- Python 3.9+
+- PyTorch 1.10+
+- CUDA 11.0+ (for GPU training)
+- InsightFace models (buffalo_l)
+- FFmpeg (for video stabilization)
 
 ## Installation
 
@@ -32,7 +25,57 @@ Face swap implementation using SimSwap architecture, fine-tuned on the LFW (Labe
 pip install torch torchvision
 pip install fastapi uvicorn
 pip install insightface opencv-python pillow
-pip install wandb tqdm
+pip install wandb tqdm lpips scikit-image matplotlib
+```
+
+Install FFmpeg:
+```bash
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Windows
+choco install ffmpeg
+```
+
+## Model Checkpoints
+
+### Pre-trained Base Models
+
+Download the required base models from the [official SimSwap preparation guide](https://github.com/neuralchen/SimSwap/blob/main/docs/guidance/preparation.md):
+
+**Download**: [Google Drive - Base Models](https://drive.google.com/drive/folders/1jV6_0FIMPC53FZ2HzZNJZGMe55bbu17R)
+
+Required files:
+- `arcface_checkpoint.tar` → Place in `arcface_model/`
+- Generator checkpoint → Place in `checkpoints/people/`
+
+### Fine-tuned Model (LFW)
+
+The fine-tuned model trained on LFW dataset:
+
+**Download**: [Google Drive - Fine-tuned Model](https://drive.google.com/drive/folders/1En0fohchDCoaiAr174U85xCglAamBUh9?usp=sharing)
+
+Place the checkpoint in `checkpoints/simswap/netG_step13000.pth`
+
+## Project Structure
+
+```
+├── app/
+│   ├── api.py              # FastAPI endpoints with stabilization
+│   ├── inference.py        # Face swap pipeline
+│   └── video.py            # Video processing with optical flow
+├── data/
+│   ├── data_loader_lfw.py  # LFW dataset loader
+│   └── face_align_utils.py # Face alignment utilities
+├── models/
+│   ├── projected_model.py  # SimSwap model (main)
+│   └── arcface_models.py   # ArcFace identity encoder
+├── train.py                # Training script
+├── evaluate.py             # Evaluation script
+└── save_aligned.py         # Batch face alignment script
 ```
 
 ## Data Preparation
@@ -97,12 +140,39 @@ curl -X POST http://localhost:8000/swap/image \
 
 ### Video Face Swap
 
+Basic usage with stabilization:
 ```bash
 curl -X POST http://localhost:8000/swap/video \
   -F "source=@source.jpg" \
   -F "target=@video.mp4" \
   -o output.mp4
 ```
+
+Adjust stabilization strength:
+```bash
+curl -X POST http://localhost:8000/swap/video \
+  -F "source=@source.jpg" \
+  -F "target=@video.mp4" \
+  -F "smoothing=40" \
+  -o output.mp4
+```
+
+Parameters:
+- `smoothing`: Stabilization strength (10-50, default: 30)
+- `enable_stabilization`: Enable/disable stabilization (default: true)
+
+## Evaluation
+
+Run quantitative evaluation on test set:
+
+```bash
+python evaluate.py
+```
+
+This computes:
+- **Identity Similarity**: ArcFace cosine similarity (higher is better)
+- **LPIPS**: Perceptual quality (lower is better)
+- **Self-swap vs Cross-swap** comparison
 
 ## Results
 
@@ -115,6 +185,19 @@ curl -X POST http://localhost:8000/swap/video \
 <td><img src="images/result.png" width="200"/><br/><i>Result</i></td>
 </tr>
 </table>
+
+### Quantitative Results
+
+Evaluation on 200 randomly sampled image pairs from LFW dataset:
+
+<img src="images/evaluation_results.png" width="100%"/>
+
+| Metric | Self-swap | Cross-swap |
+|--------|-----------|------------|
+| ID Similarity (↑) | 0.91 ± 0.04 | 0.87 ± 0.06 |
+| LPIPS (↓) | 0.13 ± 0.04 | 0.13 ± 0.04 |
+
+The model achieves high identity preservation with moderate perceptual quality, demonstrating effective face swapping while maintaining source identity characteristics.
 
 ## Model Architecture
 
@@ -133,13 +216,16 @@ L_total = λ_adv * L_adv + λ_id * L_id + λ_feat * L_feat + λ_rec * L_rec
 - **L_feat**: Feature matching loss (layer 3)
 - **L_rec**: Reconstruction loss (self-swap only)
 
-## Requirements
+## Video Stabilization
 
-- Python 3.9+
-- PyTorch 1.10+
-- CUDA 11.0+ (for GPU training)
-- InsightFace models (buffalo_l)
-- ArcFace checkpoint
+The video pipeline includes multiple stabilization techniques:
+
+1. **Landmark EMA smoothing** (lm_beta=0.85)
+2. **Identity latent EMA** (smooth=0.95)
+3. **Optical flow blending** (flow_blend=0.3)
+4. **FFmpeg vidstab post-processing**
+
+This multi-stage approach significantly reduces jitter and temporal inconsistencies.
 
 ## Citation
 
