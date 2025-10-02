@@ -110,9 +110,9 @@ curl -X POST http://localhost:8000/swap/video \
 
 <table>
 <tr>
-<td><img src="Image 1" width="200"/><br/><i>Source</i></td>
-<td><img src="Image 2" width="200"/><br/><i>Target</i></td>
-<td><img src="Image 3" width="200"/><br/><i>Result</i></td>
+<td><img src="images/source.jpg" width="200"/><br/><i>Source</i></td>
+<td><img src="images/target.jpg" width="200"/><br/><i>Target</i></td>
+<td><img src="images/result.png" width="200"/><br/><i>Result</i></td>
 </tr>
 </table>
 
