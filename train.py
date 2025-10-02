@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding:utf-8 -*-
-
 import os
 import time
 import argparse
@@ -37,7 +34,7 @@ class TrainOptions:
 
         self.parser.add_argument('--dataset', type=str, default='./lfw_funneled')
         self.parser.add_argument('--continue_train', type=str2bool, default='False')
-        self.parser.add_argument('--load_pretrain', type=str, default='./checkpoints/simswap224')
+        self.parser.add_argument('--load_pretrain', type=str, default='./people')
         self.parser.add_argument('--which_epoch', type=str, default='latest')
         self.parser.add_argument('--phase', type=str, default='train')
         self.parser.add_argument('--niter', type=int, default=10000)
@@ -49,16 +46,6 @@ class TrainOptions:
         self.parser.add_argument('--lambda_feat', type=float, default=10.0)
         self.parser.add_argument('--lambda_id', type=float, default=30.0)
         self.parser.add_argument('--lambda_rec', type=float, default=10.0)
-        
-        # Adversarial loss 설정
-        self.parser.add_argument('--adv_warmup_start', type=int, default=3000)
-        self.parser.add_argument('--adv_warmup_end', type=int, default=15000)
-        self.parser.add_argument('--adv_max_weight', type=float, default=1.0)
-        
-        # Training stability
-        self.parser.add_argument('--grad_clip', type=float, default=1.0, help='gradient clipping threshold (0=disabled)')
-        self.parser.add_argument('--use_ema', type=str2bool, default='False', help='use EMA for G')
-        self.parser.add_argument('--ema_decay', type=float, default=0.999)
 
         self.parser.add_argument('--Arc_path', type=str, default='arcface_model/arcface_checkpoint.tar')
         self.parser.add_argument('--total_step', type=int, default=30000)
@@ -100,23 +87,21 @@ if __name__ == '__main__':
     print('Device:', device)
     cudnn.benchmark = torch.cuda.is_available()
 
-    exp_dir = os.path.join(opt.checkpoints_dir, opt.name)
-    iter_path = os.path.join(exp_dir, 'iter.txt')
-    sample_path = os.path.join(exp_dir, 'samples')
+    iter_path = os.path.join(opt.checkpoints_dir, opt.name, 'iter.txt')
+    sample_path = os.path.join(opt.checkpoints_dir, opt.name, 'samples')
     os.makedirs(sample_path, exist_ok=True)
-    log_path = os.path.join(exp_dir, 'summary')
+    log_path = os.path.join(opt.checkpoints_dir, opt.name, 'summary')
     os.makedirs(log_path, exist_ok=True)
 
-    # -------------------------
-    # (A) 재개용 상태 기본값
-    # -------------------------
-    global_step_offset = 0           # 마지막까지 끝낸 step
-    resume_run_id = None             # W&B run id
-    latest_ckpt = os.path.join(exp_dir, "latest.pth")
+    if opt.continue_train:
+        try:
+            start_epoch, epoch_iter = np.loadtxt(iter_path, delimiter=',', dtype=int)
+        except Exception:
+            start_epoch, epoch_iter = 1, 0
+        print(f'Resuming from epoch {start_epoch} at iteration {epoch_iter}')
+    else:
+        start_epoch, epoch_iter = 1, 0
 
-    # -------------------------
-    # (B) 모델 생성/초기화
-    # -------------------------
     model = fsModel()
     model.initialize(opt)
     model.to(device)
@@ -124,13 +109,17 @@ if __name__ == '__main__':
     # Pretrained checkpoints (Generator required, Discriminator optional)
     if opt.load_pretrain and os.path.exists(opt.load_pretrain):
         try:
-            # ✅ G만 확실히 로드 (D/optimizer는 여기서 건드리지 않음)
             model.load_network(model.netG, 'G', opt.which_epoch, opt.load_pretrain)
             print(f'Loaded Generator weights from {opt.load_pretrain}')
+            try:
+                model.load_network(model.netD, 'D', opt.which_epoch, opt.load_pretrain)
+                print(f'Loaded Discriminator weights from {opt.load_pretrain}')
+            except Exception:
+                print("No Discriminator checkpoint found, skipped.")
         except Exception as e:
             print("Checkpoint load failed:", e)
 
-    # ArcFace 로드 (다양한 형식 대응)
+    # ArcFace 로드
     if opt.Arc_path and os.path.exists(opt.Arc_path):
         arc_obj = torch.load(opt.Arc_path, map_location=device, weights_only=False)
         if isinstance(arc_obj, dict) and "model" in arc_obj:
@@ -147,17 +136,15 @@ if __name__ == '__main__':
     model.netArc.requires_grad_(False)
     model.netArc.eval()
 
-    # G만 학습
     for p in model.netG.parameters():
         p.requires_grad = True
 
-    # D는 고정 특징 추출기로만 사용
     for p in model.netD.parameters():
         p.requires_grad = False
     model.netD.eval()
     optimizer_D = None
 
-    log_name = os.path.join(exp_dir, 'loss_log.txt')
+    log_name = os.path.join(opt.checkpoints_dir, opt.name, 'loss_log.txt')
     with open(log_name, "a") as log_file:
         now = time.strftime("%c")
         log_file.write(f'================ Training Loss ({now}) ================\n')
@@ -166,83 +153,33 @@ if __name__ == '__main__':
         (p for p in model.netG.parameters() if p.requires_grad),
         lr=opt.lr, betas=(opt.beta1, 0.999)
     )
-    
-    # EMA (선택적)
-    netG_ema = None
-    if opt.use_ema:
-        from copy import deepcopy
-        netG_ema = deepcopy(model.netG).eval().requires_grad_(False)
-        print(f"Using EMA with decay={opt.ema_decay}")
 
-    # -------------------------
-    # (C) latest.pth 있으면 재개
-    # -------------------------
-    if opt.continue_train and os.path.exists(latest_ckpt):
-        ckpt = torch.load(latest_ckpt, map_location=device)
-        # netG
-        model.netG.load_state_dict(ckpt["netG"], strict=True)
-        # EMA 복원
-        if opt.use_ema and ckpt.get("netG_ema") is not None:
-            from copy import deepcopy
-            netG_ema = deepcopy(model.netG).eval().requires_grad_(False)
-            netG_ema.load_state_dict(ckpt["netG_ema"], strict=True)
-            print("[RESUME] EMA weights loaded")
-        # optimizer (있으면)
-        if ckpt.get("optimizer_G") is not None:
-            optimizer_G.load_state_dict(ckpt["optimizer_G"])
-            # 안전: 학습률 보정
-            for pg in optimizer_G.param_groups:
-                pg["lr"] = opt.lr
-        # step & wandb id
-        global_step_offset = int(ckpt.get("step", 0))
-        resume_run_id = ckpt.get("wandb_run_id", None)
-        print(f"[RESUME] latest.pth loaded @ step {global_step_offset}")
-    elif opt.continue_train:
-        print("[RESUME] latest.pth not found, starting fresh.")
-
-    # NOTE: 로더 정규화가 ImageNet(mean/std)인 경우에만 denorm 필요
     imagenet_std = torch.tensor([0.229, 0.224, 0.225], device=device).view(3, 1, 1)
     imagenet_mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(3, 1, 1)
     denorm = lambda x: (x * imagenet_std + imagenet_mean).clamp(0, 1)
 
     train_loader = get_lfw_loader_aligned(
-        root_dir=opt.dataset,
-        batch_size=opt.batchSize,
-        num_workers=4,
-        seed=1234 + global_step_offset,  # resume 시 다른 시작점
-        self_prob=0.5,
-        image_size=224,
-        epoch_mul=10,
-    )
+                        root_dir="./lfw_aligned_224",
+                        batch_size=opt.batchSize,
+                        num_workers=4,
+                        seed=1234,
+                        self_prob=0.5,
+                        image_size=224,     # 정렬 저장 크기와 맞추기
+                        epoch_mul=10,
+                    )
     data_iter = iter(train_loader)
-    
-    # Resume 시 데이터 로더를 올바른 위치로 이동
-    if global_step_offset > 0:
-        print(f"Skipping {global_step_offset} batches to resume at correct data position...")
-        for _ in range(global_step_offset % len(train_loader)):
-            try:
-                _ = next(data_iter)
-            except StopIteration:
-                data_iter = iter(train_loader)
-                _ = next(data_iter)
 
     # -------------------------------
-    # Init WandB (resume-aware)
+    # Init WandB
     # -------------------------------
     wandb.init(
         project="faceswap-lfw",
         name=opt.name,
-        config=vars(opt),
-        id=resume_run_id,     # 이전 run id가 있으면 이어붙임
-        resume="allow"        # 없으면 새로 시작
+        config=vars(opt)
     )
-    WAND_RUN_ID = wandb.run.id
 
     print("Start training (G-only fine-tune)")
-    remaining_steps = opt.total_step - global_step_offset
-    print(f"Training from step {global_step_offset} to {opt.total_step} ({remaining_steps} steps remaining)")
-    
-    for step in range(remaining_steps):
+    for step in range(opt.total_step):
         # ---- 안전한 data_iter ----
         try:
             src_image1, src_image2, is_same = next(data_iter)
@@ -256,7 +193,7 @@ if __name__ == '__main__':
             is_same.to(device),
         )
 
-        # latent vector (ArcFace) : 입력 [-1,1] 정규화
+        # latent vector (ArcFace) : input to [-1,1] 
         img_id_112 = F.interpolate(src_image2, size=(112, 112), mode="bicubic", align_corners=False)
         img_id_112 = (img_id_112 - 0.5) / 0.5
         with torch.no_grad():
@@ -267,7 +204,6 @@ if __name__ == '__main__':
         model.netG.train()
         img_fake = model.netG(src_image1, latent_id)
 
-        # Discriminator 고정 특징 기반 (adv는 후반부만 소량)
         with torch.no_grad():
             real_feat = model.netD.get_feature(src_image1)
         gen_logits, feat = model.netD(img_fake, None)
@@ -282,8 +218,7 @@ if __name__ == '__main__':
         # feature matching
         feat_match_loss = model.criterionFeat(feat["3"], real_feat["3"])
 
-        # reconstruction (self-pair에만 마스크 적용)
-        is_same_f = is_same.float().view(-1, 1, 1, 1)
+        is_same_f = is_same.float().view(-1, 1, 1, 1)  # [B,1,1,1]
         if is_same_f.sum() > 0:
             rec_per_px = (img_fake - src_image1).abs()
             loss_G_Rec = (rec_per_px * is_same_f).sum() / (is_same_f.sum() * rec_per_px.shape[1] * rec_per_px.shape[2] * rec_per_px.shape[3])
@@ -291,15 +226,7 @@ if __name__ == '__main__':
         else:
             loss_G_Rec = torch.tensor(0.0, device=device)
 
-        # adversarial: 절대 step 기준 워밍업 (resume-aware)
-        abs_step = global_step_offset + step
-        if abs_step < opt.adv_warmup_start:
-            lambda_adv = 0.0
-        elif abs_step < opt.adv_warmup_end:
-            progress = (abs_step - opt.adv_warmup_start) / (opt.adv_warmup_end - opt.adv_warmup_start)
-            lambda_adv = opt.adv_max_weight * progress
-        else:
-            lambda_adv = opt.adv_max_weight
+        lambda_adv = 0.0 if step < max(10000, opt.total_step // 2) else 0.1
         loss_adv = (-gen_logits).mean() if lambda_adv > 0 else torch.tensor(0.0, device=device)
 
         # total G loss
@@ -312,34 +239,13 @@ if __name__ == '__main__':
 
         optimizer_G.zero_grad(set_to_none=True)
         loss_G.backward()
-        
-        # Gradient clipping (폭주 방지)
-        if opt.grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(model.netG.parameters(), opt.grad_clip)
-        
         optimizer_G.step()
-        
-        # EMA 업데이트
-        if netG_ema is not None:
-            with torch.no_grad():
-                for p_ema, p in zip(netG_ema.parameters(), model.netG.parameters()):
-                    p_ema.data.mul_(opt.ema_decay).add_(p.data, alpha=1 - opt.ema_decay)
 
         # -------------------------------
-        # Logging to WandB (resume-aware)
+        # Logging to WandB
         # -------------------------------
-        current_step = global_step_offset + step + 1
-
         if (step + 1) % opt.log_frep == 0:
             cos_sim = model.cosin_metric(latent_fake.detach(), latent_id.detach()).mean().item()
-            
-            # Gradient norm 체크 (폭주 감지)
-            total_norm = 0.0
-            for p in model.netG.parameters():
-                if p.grad is not None:
-                    total_norm += p.grad.data.norm(2).item() ** 2
-            total_norm = total_norm ** 0.5
-            
             wandb.log({
                 "loss/total_G": loss_G.item(),
                 "loss/G_adv":   float(loss_adv.item()) if lambda_adv > 0 else 0.0,
@@ -347,76 +253,38 @@ if __name__ == '__main__':
                 "loss/G_rec":   float(loss_G_Rec.item()),
                 "loss/G_feat":  feat_match_loss.item(),
                 "metric/id_cosine": cos_sim,
-                "metric/grad_norm": total_norm,
                 "meta/lambda_adv": lambda_adv,
-                "meta/step": current_step,
-            }, step=current_step)
-
-            # 재개 보조 파일
-            with open(iter_path, "w") as f:
-                f.write(f"{current_step},0\n")
+                "meta/step": step + 1,
+            }, step=step+1)
 
         if (step + 1) % opt.sample_freq == 0:
-            # EMA 모델로 샘플 생성 (더 안정적)
-            eval_G = netG_ema if netG_ema is not None else model.netG
-            eval_G.eval()
-            
+            model.netG.eval()
             with torch.no_grad():
-                # EMA 사용 시 재생성
-                if netG_ema is not None:
-                    img_fake = eval_G(src_image1, latent_id)
-                
                 idx_self  = (is_same == 1).nonzero(as_tuple=True)[0]
                 idx_cross = (is_same == 0).nonzero(as_tuple=True)[0]
 
                 logs = {}
 
                 def log_panel(indices, tag, kmax=4):
-                    """각 샘플을 가로로 묶어서 표시: [source | target | fake]"""
                     if indices.numel() == 0:
                         return {}
                     k = min(kmax, indices.numel())
-                    combined_images = []
-                    for i in indices[:k].tolist():
-                        src_img = denorm(src_image1[i].detach().cpu())
-                        tgt_img = denorm(src_image2[i].detach().cpu())
-                        fake_img = denorm(img_fake[i].detach().cpu())
-                        combined_images.append(
-                            wandb.Image(
-                                [src_img, tgt_img, fake_img],
-                                caption=f"Sample {i}: [Pose | Identity | Result]"
-                            )
-                        )
-                    return {f"samples/{tag}_combined": combined_images}
+                    ii = indices[:k].tolist()
+                    return {
+                        f"samples/source_{tag}": [wandb.Image(denorm(src_image1[i].detach().cpu()), caption=f"src {i}") for i in ii],
+                        f"samples/target_{tag}": [wandb.Image(denorm(src_image2[i].detach().cpu()), caption=f"tgt {i}") for i in ii],
+                        f"samples/fake_{tag}"  : [wandb.Image(denorm(img_fake[i].detach().cpu()),   caption=f"fake {i}") for i in ii],
+                    }
 
+                # self / cross pannel
                 logs.update(log_panel(idx_self,  "self"))
                 logs.update(log_panel(idx_cross, "cross"))
 
                 if logs:
-                    wandb.log(logs, step=current_step)
+                    wandb.log(logs, step=step+1)
 
-        # -------------------------------
-        # 체크포인트 저장 (resume-ready)
-        # -------------------------------
+        # save checkpoint
         if (step + 1) % opt.model_freq == 0:
-            os.makedirs(exp_dir, exist_ok=True)
-            # 1) netG 단독 저장 (호환성)
-            torch.save(model.netG.state_dict(), os.path.join(exp_dir, f'netG_step{current_step}.pth'))
-            # 1-1) EMA 저장
-            if netG_ema is not None:
-                torch.save(netG_ema.state_dict(), os.path.join(exp_dir, f'netG_ema_step{current_step}.pth'))
-            
-            # 2) 완전 체크포인트 (resume 전용)
-            ckpt = {
-                "step": current_step,
-                "netG": model.netG.state_dict(),
-                "netG_ema": netG_ema.state_dict() if netG_ema is not None else None,
-                "optimizer_G": optimizer_G.state_dict(),
-                "wandb_run_id": WAND_RUN_ID,
-                "opt": vars(opt),
-            }
-            torch.save(ckpt, os.path.join(exp_dir, f'ckpt_step{current_step}.pth'))
-            torch.save(ckpt, latest_ckpt)  # 항상 덮어쓰기
-            print(f"[CKPT] Saved @ step {current_step}")
-
-    print("Training finished.")
+            ckpt_dir = os.path.join(opt.checkpoints_dir, opt.name)
+            os.makedirs(ckpt_dir, exist_ok=True)
+            torch.save(model.netG.state_dict(), os.path.join(ckpt_dir, f'netG_step{step+1}.pth'))
