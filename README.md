@@ -14,7 +14,7 @@ Face swap implementation using SimSwap architecture, fine-tuned on the LFW (Labe
 ## Requirements
 
 - Python 3.9+
-- PyTorch 1.10+
+- PyTorch 2.2.2, torchvision 0.17.2
 - InsightFace models (buffalo_l)
 - FFmpeg (for video stabilization)
 
