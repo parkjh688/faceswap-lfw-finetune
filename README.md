@@ -52,7 +52,7 @@ Required files:
 - Generator checkpoint → Place in `checkpoints/people/`
 
 ### Fine-tuned Model (LFW)
-
+The fine-tuned model was trained on the LFW dataset (CPU environment). 
 The fine-tuned model trained on LFW dataset:
 
 **Download**: [Google Drive - Fine-tuned Model](https://drive.google.com/drive/folders/1En0fohchDCoaiAr174U85xCglAamBUh9?usp=sharing)
