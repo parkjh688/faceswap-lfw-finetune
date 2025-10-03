@@ -78,8 +78,8 @@ Place the checkpoint in `checkpoints/simswap/netG_step13000.pth`
 ```
 
 ## Data Preparation
-
-1. Download LFW dataset and place in `./lfw_funneled`
+ 
+1. Download LFW dataset and place in `./lfw_funneled` </br>
 👉 Alternatively, you can directly download the pre-aligned version here:  
    [Google Drive - LFW Aligned Dataset](https://drive.google.com/drive/folders/1xA7S2mwFZU1chJOUJb_69Q0lQ3Sa0uF9?usp=sharing)
 2. Run face alignment preprocessing:
