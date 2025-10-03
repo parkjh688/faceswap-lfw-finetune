@@ -38,6 +38,30 @@ async def swap_image(
     background_tasks.add_task(promote, str(tmp_path), str(final_path))
     return FileResponse(str(tmp_path), media_type="image/png", filename="out.png")
 
+import subprocess
+
+def stabilize_video(input_path: str, output_path: str, smoothing: int = 30):
+    transform_file = f"{input_path}.trf"
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", f"vidstabdetect=stepsize=6:shakiness=10:accuracy=15:result={transform_file}",
+            "-f", "null", "-"
+        ], check=True, capture_output=True)
+        
+        subprocess.run([
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", f"vidstabtransform=input={transform_file}:zoom=0:smoothing={smoothing}:interpol=bilinear,unsharp=5:5:0.8:3:3:0.4",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:a", "copy",
+            output_path
+        ], check=True, capture_output=True)
+    except subprocess.CalledProcessError:
+        shutil.copy2(input_path, output_path)
+    finally:
+        if os.path.exists(transform_file):
+            os.remove(transform_file)
+
 @app.post("/swap/video")
 async def swap_video(
     background_tasks: BackgroundTasks,
@@ -45,6 +69,8 @@ async def swap_video(
     target: UploadFile = File(None),
     source_url: str = Form(None),
     target_url: str = Form(None),
+    enable_stabilization: bool = Form(True),
+    smoothing: int = Form(30),
 ):
     src_img = await load_image_from_any(source, source_url)
     if target is None and not target_url:
@@ -52,6 +78,8 @@ async def swap_video(
 
     tmpdir = tempfile.mkdtemp(prefix="faceswap_")
     in_path = os.path.join(tmpdir, "in.mp4")
+    raw_out = os.path.join(tmpdir, "raw.mp4")
+    
     if target is not None:
         data = await target.read()
         with open(in_path, "wb") as f:
@@ -61,7 +89,14 @@ async def swap_video(
         return {"error":"URL download disabled here"}
 
     uniq_out = OUTPUT_DIR / f"out_{uuid4().hex}.mp4"
-    swap_video_stream(pipeline, src_img, in_path, str(uniq_out))
+    
+    swap_video_stream(pipeline, src_img, in_path, raw_out)
+    
+    if enable_stabilization:
+        stabilize_video(raw_out, str(uniq_out), smoothing=smoothing)
+    else:
+        shutil.copy2(raw_out, str(uniq_out))
+    
     shutil.rmtree(tmpdir, ignore_errors=True)
 
     final_out = OUTPUT_DIR / "out.mp4"

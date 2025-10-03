@@ -15,7 +15,6 @@ Face swap implementation using SimSwap architecture, fine-tuned on the LFW (Labe
 
 - Python 3.9+
 - PyTorch 1.10+
-- CUDA 11.0+ (for GPU training)
 - InsightFace models (buffalo_l)
 - FFmpeg (for video stabilization)
 
@@ -69,13 +68,13 @@ Place the checkpoint in `checkpoints/simswap/netG_step13000.pth`
 │   └── video.py            # Video processing with optical flow
 ├── data/
 │   ├── data_loader_lfw.py  # LFW dataset loader
-│   └── face_align_utils.py # Face alignment utilities
+│   ├── face_align_utils.py # Face alignment utilities
+    └── save_aligned.py     # Batch face alignment script
 ├── models/
 │   ├── projected_model.py  # SimSwap model (main)
 │   └── arcface_models.py   # ArcFace identity encoder
 ├── train.py                # Training script
-├── evaluate.py             # Evaluation script
-└── save_aligned.py         # Batch face alignment script
+└── evaluate.py             # Evaluation script
 ```
 
 ## Data Preparation
